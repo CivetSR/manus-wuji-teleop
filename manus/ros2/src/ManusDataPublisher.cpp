@@ -59,7 +59,6 @@ ManusDataPublisher::ManusDataPublisher() : Node("manus_data_publisher")
         ClientLog::error("Failed to set hand motion mode. The value returned was {}.", (int32_t)t_HandMotionResult);
     }
 }
-
 ManusDataPublisher::~ManusDataPublisher()
 {
     //Send a haptics command to all haptics devices to zero them out
@@ -81,6 +80,7 @@ ManusDataPublisher::~ManusDataPublisher()
     {
         delete[] m_NodeInfo;
         m_NodeInfo = nullptr;
+        m_NodeInfoCount = 0;
     }
 
     s_Instance = nullptr;
@@ -185,16 +185,6 @@ ClientReturnCode ManusDataPublisher::RegisterAllCallbacks()
         return ClientReturnCode::ClientReturnCode_FailedToInitialize;
     }
 
-    const SDKReturnCode t_RegisterErgonomicsCallbackResult = CoreSdk_RegisterCallbackForErgonomicsStream(
-        *OnErgonomicsStreamCallback);
-    if (t_RegisterErgonomicsCallbackResult != SDKReturnCode::SDKReturnCode_Success)
-    {
-        ClientLog::error(
-            "Failed to register callback function for processing ergonomics data from Manus Core. The value returned was {}.",
-            (int32_t)t_RegisterErgonomicsCallbackResult);
-        return ClientReturnCode::ClientReturnCode_FailedToInitialize;
-    }
-
     const SDKReturnCode t_RegisterLandscapeCallbackResult = CoreSdk_RegisterCallbackForLandscapeStream(
         *OnLandscapeCallback);
     if (t_RegisterLandscapeCallbackResult != SDKReturnCode::SDKReturnCode_Success)
@@ -216,10 +206,6 @@ void ManusDataPublisher::PublishCallback()
     std::map<uint32_t, ClientRawSkeleton> t_GloveDataMap = m_GloveDataMap;
     m_RawSkeletonMutex.unlock();
 
-    m_ErgonomicsMutex.lock();
-    std::map<uint32_t, ErgonomicsData> t_ErgonomicsDataMap = m_ErgonomicsDataMap;
-    m_ErgonomicsMutex.unlock();
-
     m_RawSensorDataMutex.lock();
     std::map<uint32_t, RawDeviceData> t_RawSensorDataMap = m_RawSensorDataMap;
     m_RawSensorDataMutex.unlock();
@@ -230,12 +216,16 @@ void ManusDataPublisher::PublishCallback()
 
         auto t_GloveData = t_GloveDataMap.begin();
 
-        m_NodeInfo = new NodeInfo[t_GloveData->second.info.nodesCount];
-        const SDKReturnCode t_Result = CoreSdk_GetRawSkeletonNodeInfoArray(t_GloveData->first, m_NodeInfo, t_GloveData->second.info.nodesCount);
+        m_NodeInfoCount = t_GloveData->second.info.nodesCount;
+        m_NodeInfo = new NodeInfo[m_NodeInfoCount];
+        const SDKReturnCode t_Result = CoreSdk_GetRawSkeletonNodeInfoArray(t_GloveData->first, m_NodeInfo, m_NodeInfoCount);
 
         if (t_Result != SDKReturnCode::SDKReturnCode_Success)
         {
             ClientLog::error("Failed to get Raw Skeleton Hierarchy. The error given was {}.", (int32_t)t_Result);
+            delete[] m_NodeInfo;
+            m_NodeInfo = nullptr;
+            m_NodeInfoCount = 0;
             return;
         }
     }
@@ -305,12 +295,17 @@ void ManusDataPublisher::PublishCallback()
         {
 
             uint32_t t_NodeInfoIndex = 0;
-            for (; t_NodeInfoIndex < t_RawSkel.info.nodesCount; t_NodeInfoIndex++)
+            for (; t_NodeInfoIndex < m_NodeInfoCount; t_NodeInfoIndex++)
             {
                 if (m_NodeInfo[t_NodeInfoIndex].nodeId == node.id)
                 {
                     break;
                 }
+            }
+            if (t_NodeInfoIndex == m_NodeInfoCount)
+            {
+                ClientLog::error("Raw skeleton node {} has no matching NodeInfo; dropping node.", node.id);
+                continue;
             }
 
             manus_ros2_msgs::msg::ManusRawNode t_Node;
@@ -334,27 +329,6 @@ void ManusDataPublisher::PublishCallback()
             t_Node.pose = t_Pose;
 
             t_Msg.raw_nodes.push_back(t_Node);
-        }
-
-        // Ergonomics data
-        if (t_ErgonomicsDataMap.find(t_Msg.glove_id) == t_ErgonomicsDataMap.end())
-        {
-            ClientLog::error("Ergonomics data not found for glove_id: {}", t_Msg.glove_id);
-            continue;
-        }
-
-        ErgonomicsData t_ErgoData = t_ErgonomicsDataMap[t_Msg.glove_id];
-        t_Msg.ergonomics_count = ErgonomicsDataType_MAX_SIZE / 2;
-
-        for (size_t y = 0; y < ErgonomicsDataType_MAX_SIZE; y++)
-        {
-            if (ErgonomicsDataTypeToSide(static_cast<ErgonomicsDataType>(y)) != m_Landscape->gloveDevices.gloves[i].side)
-                continue;
-
-            manus_ros2_msgs::msg::ManusErgonomics t_ErgoMsg;
-            t_ErgoMsg.type = ErgonomicsDataTypeToString(static_cast<ErgonomicsDataType>(y));
-            t_ErgoMsg.value = t_ErgoData.data[y];
-            t_Msg.ergonomics.push_back(t_ErgoMsg);
         }
 
         // Raw sensor data
@@ -395,9 +369,11 @@ void ManusDataPublisher::PublishCallback()
         auto t_Publisher = m_GlovePublisher.find(t_Msg.glove_id);
         if (t_Publisher == m_GlovePublisher.end())
         {
-            std::string topic_name = "manus_glove_" + std::to_string(m_GlovePublisher.size());
+            const size_t topic_index = m_GloveTopicIndex.size();
+            std::string topic_name = "manus_glove_" + std::to_string(topic_index);
             auto t_NewPublisher = this->create_publisher<manus_ros2_msgs::msg::ManusGlove>(topic_name, 10);
             t_Publisher = m_GlovePublisher.emplace(t_Msg.glove_id, t_NewPublisher).first;
+            m_GloveTopicIndex.emplace(t_Msg.glove_id, topic_index);
             // (Re)create vibration subscribers for all gloves
             UpdateVibrationSubscribers();
         }
@@ -537,30 +513,6 @@ void ManusDataPublisher::OnRawDeviceDataStreamCallback(const RawDeviceDataInfo *
     }
 }
 
-void ManusDataPublisher::OnErgonomicsStreamCallback(const ErgonomicsStream *const p_Ergo)
-{
-    if (s_Instance)
-    {
-        for (uint32_t i = 0; i < p_Ergo->dataCount; i++)
-        {
-            if (p_Ergo->data[i].isUserID)
-                continue;
-
-            ErgonomicsData t_Ergo;
-            t_Ergo.id = p_Ergo->data[i].id;
-            t_Ergo.isUserID = p_Ergo->data[i].isUserID;
-
-            for (int j = 0; j < ErgonomicsDataType::ErgonomicsDataType_MAX_SIZE; j++)
-            {
-                t_Ergo.data[j] = p_Ergo->data[i].data[j];
-            }
-            s_Instance->m_ErgonomicsMutex.lock();
-            s_Instance->m_ErgonomicsDataMap.insert_or_assign(p_Ergo->data[i].id, t_Ergo);
-            s_Instance->m_ErgonomicsMutex.unlock();
-        }
-    }
-}
-
 void ManusDataPublisher::OnLandscapeCallback(const Landscape *const p_Landscape)
 {
     if (s_Instance == nullptr)
@@ -582,7 +534,13 @@ void ManusDataPublisher::UpdateVibrationSubscribers()
     for (const auto &entry : m_GlovePublisher)
     {
         uint32_t glove_id = entry.first;
-        std::string topic_name = "manus_glove_" + std::to_string(std::distance(m_GlovePublisher.begin(), m_GlovePublisher.find(glove_id))) + "/vibration_cmd";
+        const auto topic_index = m_GloveTopicIndex.find(glove_id);
+        if (topic_index == m_GloveTopicIndex.end())
+        {
+            ClientLog::error("Missing topic index for glove_id: {}", glove_id);
+            continue;
+        }
+        std::string topic_name = "manus_glove_" + std::to_string(topic_index->second) + "/vibration_cmd";
         // Only create if not already present
         if (m_VibrationSubscribers.find(glove_id) == m_VibrationSubscribers.end())
         {
@@ -719,126 +677,6 @@ std::string ManusDataPublisher::ChainTypeToString(ChainType p_ChainType)
         return "Foot";
     case ChainType_Toe:
         return "Toe";
-    default:
-        return "Invalid";
-    }
-}
-
-//-1 for left, 0 for I dunno, 1 for right
-Side ManusDataPublisher::ErgonomicsDataTypeToSide(ErgonomicsDataType p_ErgoDataType)
-{
-    switch (p_ErgoDataType)
-    {
-    case ErgonomicsDataType_LeftFingerIndexDIPStretch:
-    case ErgonomicsDataType_LeftFingerMiddleDIPStretch:
-    case ErgonomicsDataType_LeftFingerRingDIPStretch:
-    case ErgonomicsDataType_LeftFingerPinkyDIPStretch:
-    case ErgonomicsDataType_LeftFingerIndexPIPStretch:
-    case ErgonomicsDataType_LeftFingerMiddlePIPStretch:
-    case ErgonomicsDataType_LeftFingerRingPIPStretch:
-    case ErgonomicsDataType_LeftFingerPinkyPIPStretch:
-    case ErgonomicsDataType_LeftFingerIndexMCPStretch:
-    case ErgonomicsDataType_LeftFingerMiddleMCPStretch:
-    case ErgonomicsDataType_LeftFingerRingMCPStretch:
-    case ErgonomicsDataType_LeftFingerPinkyMCPStretch:
-    case ErgonomicsDataType_LeftFingerThumbMCPSpread:
-    case ErgonomicsDataType_LeftFingerThumbMCPStretch:
-    case ErgonomicsDataType_LeftFingerThumbPIPStretch:
-    case ErgonomicsDataType_LeftFingerThumbDIPStretch:
-    case ErgonomicsDataType_LeftFingerIndexMCPSpread:
-    case ErgonomicsDataType_LeftFingerMiddleMCPSpread:
-    case ErgonomicsDataType_LeftFingerRingMCPSpread:
-    case ErgonomicsDataType_LeftFingerPinkyMCPSpread:
-        return Side::Side_Left;
-    case ErgonomicsDataType_RightFingerIndexDIPStretch:
-    case ErgonomicsDataType_RightFingerMiddleDIPStretch:
-    case ErgonomicsDataType_RightFingerRingDIPStretch:
-    case ErgonomicsDataType_RightFingerPinkyDIPStretch:
-    case ErgonomicsDataType_RightFingerIndexPIPStretch:
-    case ErgonomicsDataType_RightFingerMiddlePIPStretch:
-    case ErgonomicsDataType_RightFingerRingPIPStretch:
-    case ErgonomicsDataType_RightFingerPinkyPIPStretch:
-    case ErgonomicsDataType_RightFingerIndexMCPStretch:
-    case ErgonomicsDataType_RightFingerMiddleMCPStretch:
-    case ErgonomicsDataType_RightFingerRingMCPStretch:
-    case ErgonomicsDataType_RightFingerPinkyMCPStretch:
-    case ErgonomicsDataType_RightFingerThumbMCPSpread:
-    case ErgonomicsDataType_RightFingerThumbMCPStretch:
-    case ErgonomicsDataType_RightFingerThumbPIPStretch:
-    case ErgonomicsDataType_RightFingerThumbDIPStretch:
-    case ErgonomicsDataType_RightFingerIndexMCPSpread:
-    case ErgonomicsDataType_RightFingerMiddleMCPSpread:
-    case ErgonomicsDataType_RightFingerRingMCPSpread:
-    case ErgonomicsDataType_RightFingerPinkyMCPSpread:
-        return Side::Side_Right;
-    default:
-        return Side::Side_Invalid;
-    }
-}
-std::string ManusDataPublisher::ErgonomicsDataTypeToString(ErgonomicsDataType p_ErgoDataType)
-{
-    switch (p_ErgoDataType)
-    {
-    case ErgonomicsDataType_LeftFingerIndexDIPStretch:
-    case ErgonomicsDataType_RightFingerIndexDIPStretch:
-        return "IndexDIPStretch";
-    case ErgonomicsDataType_LeftFingerMiddleDIPStretch:
-    case ErgonomicsDataType_RightFingerMiddleDIPStretch:
-        return "MiddleDIPStretch";
-    case ErgonomicsDataType_LeftFingerRingDIPStretch:
-    case ErgonomicsDataType_RightFingerRingDIPStretch:
-        return "RingDIPStretch";
-    case ErgonomicsDataType_LeftFingerPinkyDIPStretch:
-    case ErgonomicsDataType_RightFingerPinkyDIPStretch:
-        return "PinkyDIPStretch";
-    case ErgonomicsDataType_LeftFingerIndexPIPStretch:
-    case ErgonomicsDataType_RightFingerIndexPIPStretch:
-        return "IndexPIPStretch";
-    case ErgonomicsDataType_LeftFingerMiddlePIPStretch:
-    case ErgonomicsDataType_RightFingerMiddlePIPStretch:
-        return "MiddlePIPStretch";
-    case ErgonomicsDataType_LeftFingerRingPIPStretch:
-    case ErgonomicsDataType_RightFingerRingPIPStretch:
-        return "RingPIPStretch";
-    case ErgonomicsDataType_LeftFingerPinkyPIPStretch:
-    case ErgonomicsDataType_RightFingerPinkyPIPStretch:
-        return "PinkyPIPStretch";
-    case ErgonomicsDataType_LeftFingerIndexMCPStretch:
-    case ErgonomicsDataType_RightFingerIndexMCPStretch:
-        return "IndexMCPStretch";
-    case ErgonomicsDataType_LeftFingerMiddleMCPStretch:
-    case ErgonomicsDataType_RightFingerMiddleMCPStretch:
-        return "MiddleMCPStretch";
-    case ErgonomicsDataType_LeftFingerRingMCPStretch:
-    case ErgonomicsDataType_RightFingerRingMCPStretch:
-        return "RingMCPStretch";
-    case ErgonomicsDataType_LeftFingerPinkyMCPStretch:
-    case ErgonomicsDataType_RightFingerPinkyMCPStretch:
-        return "PinkyMCPStretch";
-    case ErgonomicsDataType_LeftFingerThumbMCPSpread:
-    case ErgonomicsDataType_RightFingerThumbMCPSpread:
-        return "ThumbMCPSpread";
-    case ErgonomicsDataType_LeftFingerThumbMCPStretch:
-    case ErgonomicsDataType_RightFingerThumbMCPStretch:
-        return "ThumbMCPStretch";
-    case ErgonomicsDataType_LeftFingerThumbPIPStretch:
-    case ErgonomicsDataType_RightFingerThumbPIPStretch:
-        return "ThumbPIPStretch";
-    case ErgonomicsDataType_LeftFingerThumbDIPStretch:
-    case ErgonomicsDataType_RightFingerThumbDIPStretch:
-        return "ThumbDIPStretch";
-    case ErgonomicsDataType_LeftFingerIndexMCPSpread:
-    case ErgonomicsDataType_RightFingerIndexMCPSpread:
-        return "IndexSpread";
-    case ErgonomicsDataType_LeftFingerMiddleMCPSpread:
-    case ErgonomicsDataType_RightFingerMiddleMCPSpread:
-        return "MiddleSpread";
-    case ErgonomicsDataType_LeftFingerRingMCPSpread:
-    case ErgonomicsDataType_RightFingerRingMCPSpread:
-        return "RingSpread";
-    case ErgonomicsDataType_LeftFingerPinkyMCPSpread:
-    case ErgonomicsDataType_RightFingerPinkyMCPSpread:
-        return "PinkySpread";
     default:
         return "Invalid";
     }

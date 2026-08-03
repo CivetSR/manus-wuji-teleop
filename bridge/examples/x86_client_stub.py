@@ -47,7 +47,7 @@ def recv_loop(sock: socket.socket) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="6.6.7.100", help="Robot Jetson IP")
+    ap.add_argument("--host", default="127.0.0.1", help="Hand2/MuJoCo backend host")
     ap.add_argument("--port", type=int, default=9500)
     ap.add_argument("--side", default="left", choices=("left", "right"))
     ap.add_argument("--demo", action="store_true", help="Send a slow pinky wave")

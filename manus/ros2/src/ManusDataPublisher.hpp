@@ -9,7 +9,6 @@
 #include <deque>
 
 #include "rclcpp/rclcpp.hpp"
-#include "manus_ros2_msgs/msg/manus_ergonomics.hpp"
 #include "manus_ros2_msgs/msg/manus_glove.hpp"
 #include "manus_ros2_msgs/msg/manus_raw_node.hpp"
 #include "manus_ros2_msgs/msg/manus_vibration_command.hpp"
@@ -86,9 +85,6 @@ public:
 
     static void OnRawDeviceDataStreamCallback(
         const RawDeviceDataInfo *const p_RawDeviceDataInfo);
-    
-    static void OnErgonomicsStreamCallback(
-        const ErgonomicsStream *const p_ErgonomicsStream);
 
     static void OnLandscapeCallback(
         const Landscape *const p_LandscapeStream);
@@ -105,10 +101,6 @@ protected:
     std::string JointTypeToString(FingerJointType p_FingerJointType);
     
     std::string ChainTypeToString(ChainType p_ChainType);
-    
-    Side ErgonomicsDataTypeToSide(ErgonomicsDataType p_ErgonomicsDataType);
-    
-    std::string ErgonomicsDataTypeToString(ErgonomicsDataType p_ErgonomicsDataType);
     
     // Helper to (re)create vibration subscribers for all known gloves
     void UpdateVibrationSubscribers();
@@ -134,14 +126,11 @@ protected:
     std::mutex m_RawSkeletonMutex;
     std::map<uint32_t, ClientRawSkeleton> m_GloveDataMap;
     NodeInfo* m_NodeInfo = nullptr;
+    uint32_t m_NodeInfoCount = 0;
     
     //Add raw sensor data
     std::mutex m_RawSensorDataMutex;
     std::map<uint32_t, RawDeviceData> m_RawSensorDataMap;
-    
-    //Add ergonomics data
-    std::mutex m_ErgonomicsMutex;
-    std::map<uint32_t, ErgonomicsData> m_ErgonomicsDataMap;
     
     //Landscape data
     std::mutex m_LandscapeMutex;
@@ -152,6 +141,8 @@ protected:
     
     // Vibration command subscribers, mapped by glove_id
     std::map<uint32_t, rclcpp::Subscription<manus_ros2_msgs::msg::ManusVibrationCommand>::SharedPtr> m_VibrationSubscribers;
+    // Stable topic index assigned when each glove publisher is created.
+    std::map<uint32_t, size_t> m_GloveTopicIndex;
     
     // MANUS message publishers
     rclcpp::TimerBase::SharedPtr m_PublishTimer;

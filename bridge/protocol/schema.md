@@ -1,186 +1,117 @@
-# Wuji Endpoint Protocol (v1)
+# Wuji Backend TCP JSONL Protocol v1
 
-Transport: **TCP**, host = robot Jetson (`6.6.7.100` or reachable LAN IP), default port **`9500`**.
+默认 transport 为本机 `127.0.0.1:9500`。client 是 MANUS/IK bridge；server 是同一 x86 上的 MuJoCo 或 `wuji-sdk` Hand2 backend。可选远端部署不改变协议。
 
-Framing: **newline-delimited JSON** (UTF-8). Each message is one JSON object ending with `\n`.
+每个 UTF-8 JSON object 以 `\n` 结尾。
 
-Direction:
-- **Client** = x86 Manus host
-- **Server** = robot Wuji endpoint (`wuji_endpoint.py`)
+## 生命周期
 
----
+1. client 连接并发送 `hello`
+2. server 返回 `hello_ack`
+3. client 发送 `enable:true`，取得唯一控制租约并 arm 指定手
+4. client 发送每侧 `joint_cmd`
+5. server 推送 `joint_state` 和 `tactile`
+6. shutdown 时 client 发送 `enable:false`
 
-## Connection lifecycle
-
-1. Client TCP connect
-2. Server immediately sends `hello_ack`
-3. Client may send `hello` again (optional)
-4. Client sends `enable` with `enabled: true`
-5. Client streams `joint_cmd` / `joint_cmd_both`
-6. Server streams `joint_state` + `tactile` to all connected clients
-7. Client sends `enable: false` or closes socket on exit
-
----
-
-## Client → Server
-
-### `hello`
+## Client → server
 
 ```json
-{"type":"hello","client":"manus_wuji_bridge","protocol_version":1}
+{"type":"hello","client":"manus_wuji_bridge","protocol_version":1,"features":["joint_cmd","tactile","haptic"]}
 ```
 
-### `enable`
-
-Required before motion if `require_enable: true` (default).
-
 ```json
-{"type":"enable","enabled":true}
+{"type":"enable","side":"both","enabled":true}
 ```
 
-### `ping`
-
 ```json
-{"type":"ping","t":1710000000.123}
+{
+  "type":"joint_cmd",
+  "side":"left",
+  "seq":123,
+  "t_ms":1710000000000,
+  "position":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+  "enable":true
+}
 ```
 
-### `get_status`
+`position` 必须恰好 20 个 JSON number、全部有限、单位 rad。布尔值和数字字符串也拒绝；server 不截断、不补零、不做类型强转。
+
+`seq` 和 `t_ms` 都是必填的非负整数，并且对每侧严格递增。默认拒绝超过 250 ms 的旧命令和超过 1000 ms 的未来时间戳。`joint_cmd.enable:true` 不会替代上一步显式 arm；`joint_cmd.enable:false` 等价于立即 disarm，且不执行其中的位置。
+
+## 控制安全状态机
+
+- 同一时刻全 server 只有一个 client 可持有控制租约；其他连接仍可读取状态，但 `enable:true` 返回 `control_busy`，写命令返回 `not_controller`。
+- TCP 建连和 `hello` 都不会使能手。只有控制 owner 的显式 `enable:true` 才会 arm。
+- 每侧从 arm 起及最后一条有效命令起使用默认 200 ms deadman（可配置范围 100–250 ms）。
+- `enable:false`、owner 断连或 deadman 到期都会停止发布，并对真实 Hand 2 调用 `hand.disable()`；MuJoCo 使用同一状态机。
+- deadman 后必须重新 arm。坏命令、过期命令和第二 client 的命令不会刷新 deadman。
+
+顺序为 finger-major：
+
+```text
+0..3 thumb, 4..7 index, 8..11 middle, 12..15 ring, 16..19 pinky
+```
+
+每指 J1..J4 的模型名见 `docs/JOINT_LAYOUT.md`。
+
+其他请求：
 
 ```json
+{"type":"ping"}
 {"type":"get_status"}
 ```
 
-### `joint_cmd`
-
-Drive one hand. Positions are **radians**, length **20**, finger-major:
-
-| indices | finger |
-|--------:|--------|
-| 0–3 | thumb |
-| 4–7 | index |
-| 8–11 | middle |
-| 12–15 | ring |
-| 16–19 | pinky |
-
-Within each finger, DOF order intended to align with Manus:
-`MCPSpread, MCPStretch, PIPStretch, DIPStretch` (after your calibration scales/offsets).
+## Server → client
 
 ```json
 {
-  "type": "joint_cmd",
-  "side": "left",
-  "positions_rad": [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
-  "t": 1710000000.123
-}
-```
-
-### `joint_cmd_both`
-
-```json
-{
-  "type": "joint_cmd_both",
-  "left": [/* 20 floats */],
-  "right": [/* 20 floats */],
-  "t": 1710000000.123
-}
-```
-
----
-
-## Server → Client
-
-### `hello_ack`
-
-```json
-{
-  "type": "hello_ack",
-  "protocol_version": 1,
-  "server": "wuji_endpoint",
-  "enabled": false,
-  "joint_count": 20,
-  "finger_order": ["thumb","index","middle","ring","pinky"],
-  "hands": {
-    "left": {"serial":"WH2JA01260723001","connected":true},
-    "right":{"serial":"WH2KA01260722001","connected":true}
+  "type":"hello_ack",
+  "protocol_version":1,
+  "server":"wuji_manus_bridge",
+  "command_timeout_ms":200,
+  "max_command_age_ms":250,
+  "hands":{
+    "left":{"connected":true,"address":"192.168.1.10:5000","serial_number":"WH..."}
+  },
+  "joint_layout":{
+    "order":"finger_major",
+    "fingers":["thumb","index","middle","ring","pinky"],
+    "joints_per_finger":4,
+    "num_joints":20,
+    "unit":"rad"
   }
 }
 ```
 
-### `status`
-
-```json
-{"type":"status","enabled":true,"hands":{}}
-```
-
-### `pong`
-
-```json
-{"type":"pong","t":1710000000.123,"server_t":1710000000.130}
-```
-
-### `joint_state` (periodic, default 50 Hz)
-
 ```json
 {
-  "type": "joint_state",
-  "t": 1710000000.2,
-  "enabled": true,
-  "hands": {
-    "left": {
-      "side": "left",
-      "serial": "WH2JA01260723001",
-      "connected": true,
-      "positions_rad": [/* 20 */]
-    },
-    "right": { "...": "..." }
-  }
+  "type":"joint_state",
+  "side":"left",
+  "seq":10,
+  "t_ms":1710000000000,
+  "position":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],
+  "velocity":[],
+  "effort":[]
 }
 ```
 
-### `tactile` (periodic, default 50 Hz)
-
-Forces are **Newtons**. Enough for Manus vibration without remapping on the robot.
-
 ```json
 {
-  "type": "tactile",
-  "t": 1710000000.2,
-  "unit": "N",
-  "finger_order": ["thumb","index","middle","ring","pinky"],
-  "hands": {
-    "left": {
-      "side": "left",
-      "fingers": {
-        "thumb": {
-          "peak_n": 0.42,
-          "mean_active_n": 0.11,
-          "active_points": 8,
-          "point_count": 40,
-          "agg": {"fx":0.0,"fy":0.0,"fz":0.35,"temp_c":31.2}
-        },
-        "index": {"peak_n": 0.0, "mean_active_n": 0.0, "active_points": 0, "point_count": 34, "agg": {"fx":0,"fy":0,"fz":0,"temp_c":0}},
-        "middle": {"...": "..."},
-        "ring": {"...": "..."},
-        "pinky": {"...": "..."}
-      }
-    },
-    "right": {"...": "..."}
-  }
+  "type":"tactile",
+  "side":"left",
+  "seq":42,
+  "t_ms":1710000000000,
+  "fingers":[
+    {"peak_n":0.42,"mean_n":0.11,"agg_fz":0.35,"point_count":40,"haptic_01":0.21}
+  ],
+  "haptic_powers":[0.21,0.0,0.0,0.0,0.0]
 }
 ```
 
-If server config `tactile_include_points: true`, each finger may also include `"fz":[...point forces...]`.
+`haptic_powers` 顺序 thumb→pinky，范围 `[0,1]`。真实 backend 启动时优先读取 SDK `FingertipSensorInfo.format` v1，并按其中每个 field 的 name/type/offset/scale 解码；只有元数据读取不可用时才采用官方 Hand 2 固定布局：拇指 40 点，其余四指各 34 点。存在但不支持的格式会使该手启动失败；长度、finite 或 metadata digest 不匹配的帧会丢弃。MuJoCo backend 返回零触觉。
 
-### `error`
+错误示例：
 
 ```json
-{"type":"error","message":"not enabled; send {\"type\":\"enable\",\"enabled\":true}"}
+{"type":"error","code":"bad_position","message":"position must be a JSON list of exactly 20 values"}
 ```
-
----
-
-## Safety notes
-
-- Endpoint refuses `joint_cmd` until `enable=true` (configurable).
-- Closing the TCP connection does **not** automatically zero the hands; send `enable:false` and/or hold last safe pose before disconnect.
-- Only **one** SDK client should own each hand (stop `apex-tool` / ROS wuji driver while this endpoint runs).

@@ -15,7 +15,6 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/ManusGlove.msg
   msg/ManusRawNode.msg
-  msg/ManusErgonomics.msg
   msg/ManusVibrationCommand.msg
   DEPENDENCIES geometry_msgs)
 

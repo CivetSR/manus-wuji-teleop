@@ -1,0 +1,60 @@
+# MANUS raw-node input -> Wuji Hand 2, right.
+# Model identity/link naming come from the official Hand2 config in
+# wuji-retargeting 2026.8.3. Retarget values are the MANUS production tuning
+# validated on Host5090, without Wuji Glove device-specific offsets.
+model:
+  generation: "wuji-description/hand2/hand2_beta1/body"
+  description_commit: "8271644a78d69ed9a4adcf9165d882c64ad33dfa"
+  input: "manus_raw_nodes"
+
+optimizer:
+  type: "AdaptiveOptimizerAnalytical"
+  urdf_path: "${WUJI_DESCRIPTION_ROOT}/hand2/hand2_beta1/body/urdf/right.urdf"
+  mjcf_path: "${WUJI_DESCRIPTION_ROOT}/hand2/hand2_beta1/body/mjcf/right.xml"
+  link_naming:
+    prefix: "r_"
+    palm: "wrist"
+    fingers: [thumb, index_finger, middle_finger, ring_finger, pinky]
+    pip: "{finger}_middle"
+    dip: "{finger}_distal"
+    tip: "{finger}_tip"
+    link1: "{finger}_proximal_abd"
+
+retarget:
+  huber_delta: 2.0
+  huber_delta_dir: 0.5
+  norm_delta: 0.04
+  w_pos: 1.0
+  w_dir: 10.0
+  scaling: 1.0
+  project_tip_dir: false
+  w_full_hand: 1.0
+
+  # Hand2 biomechanical constraints from the official Hand2 baseline.
+  w_hyper: 1.0
+  soft_min: 0.0
+  w_couple: 0.1
+  couple_ratio: 0.7
+
+  # Host5090 MANUS tuning.
+  segment_scaling:
+    thumb: [0.98, 1.0, 0.98]
+    index: [1.1, 0.989, 0.96]
+    middle: [1.1, 0.99, 1.02]
+    ring: [1.1, 0.99, 1.02]
+    pinky: [1.105, 1.15, 1.15]
+  pinch_thresholds:
+    index: {d1: 2.0, d2: 4.0}
+    middle: {d1: 2.0, d2: 4.0}
+    ring: {d1: 2.0, d2: 4.0}
+    pinky: {d1: 2.0, d2: 4.0}
+  mediapipe_rotation:
+    x: -10.0
+    y: 0.0
+    z: -15.0
+  lp_alpha: 0.72
+
+# Intentionally absent:
+# - thumb_skip_pip: specific to inaccurate Wuji Glove thumb reconstruction.
+# - Wuji Glove's -90 degree rotation and per-serial SDK offsets.
+# - nlopt_maxeval/nlopt_ftol_abs: ignored by wuji-retargeting 2026.8.3.

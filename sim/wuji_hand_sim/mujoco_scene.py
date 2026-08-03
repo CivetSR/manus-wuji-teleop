@@ -1,8 +1,9 @@
-"""MuJoCo scene: Wuji Hand **2** only (hand2/hand2_beta1 MJCF)."""
+"""MuJoCo scene using pinned wuji-description Hand2 Beta1."""
 
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from pathlib import Path
@@ -10,61 +11,31 @@ from typing import Optional
 
 import mujoco
 import mujoco.viewer
+import numpy as np
+
+from joint_order import (
+    hand2_protocol_joint_names,
+    mujoco_actuator_joint_names,
+    strict_joint_name_permutation,
+)
+from wuji_retargeting_adapter import official_hand2_model_paths
 
 log = logging.getLogger("wuji_hand_sim.mujoco")
 
-TELEOP_ROOT = Path(__file__).resolve().parents[2]
-HAND2_REL = Path("hand2/hand2_beta1/body/mjcf")
-
-
-def _find_wuji_description() -> Path:
-    candidates = [
-        TELEOP_ROOT / "deps" / "wuji-description",
-        TELEOP_ROOT.parent / "wuji-description",
-    ]
-    for root in candidates:
-        if (root / HAND2_REL / "left.xml").is_file():
-            return root
-    raise FileNotFoundError(
-        "Wuji Hand 2 MJCF not found. Run: bash setup.sh\n"
-        "  or: git clone https://github.com/wuji-technology/wuji-description.git "
-        f"{TELEOP_ROOT / 'deps' / 'wuji-description'}"
-    )
-
-
-WUJI_DESC = _find_wuji_description()
-DEFAULT_MJCF = {
-    "left": WUJI_DESC / HAND2_REL / "left.xml",
-    "right": WUJI_DESC / HAND2_REL / "right.xml",
-}
-
-# Reject Hand 1 paths explicitly
-_FORBIDDEN_PARTS = ("/hand/body/", "/hand/body-with-soft/", "finger1_joint")
-
-
 def mjcf_for_side(side: str) -> Path:
-    path = DEFAULT_MJCF.get(side.lower())
-    if path is None or not path.is_file():
-        raise FileNotFoundError(f"Hand 2 MJCF for side={side!r} not found at {path}")
-    resolved = str(path.resolve())
-    if any(bad in resolved for bad in _FORBIDDEN_PARTS):
-        raise RuntimeError(f"Refusing Hand 1 model path: {path}")
-    if "hand2" not in resolved:
-        raise RuntimeError(f"Expected hand2 in path, got: {path}")
-    return path
+    return official_hand2_model_paths(side).mjcf
 
 
 def _assert_hand2_model(model: mujoco.MjModel, mjcf: Path) -> None:
     if model.nu != 20:
-        log.warning("Hand 2 expects 20 actuators, model has nu=%d", model.nu)
-    # MuJoCo stores model name in model names buffer; check XML path as primary guard
-    if "hand2" not in str(mjcf):
-        raise RuntimeError(f"Not a Hand 2 MJCF: {mjcf}")
+        raise RuntimeError(f"Hand2 requires exactly 20 actuators, model has nu={model.nu}")
+    if "/hand2/hand2_beta1/body/" not in str(mjcf.resolve()):
+        raise RuntimeError(f"Not the pinned Hand2 Beta1 MJCF: {mjcf}")
     log.info("Loaded Wuji Hand 2: %s (nu=%d)", mjcf.name, model.nu)
 
 
 class MujocoScene:
-    """Single Hand 2 model. Protocol index i -> actuator i."""
+    """Single Hand2 model with name-verified protocol ordering."""
 
     NUM_ACTUATORS = 20
 
@@ -76,6 +47,27 @@ class MujocoScene:
         self.model = mujoco.MjModel.from_xml_path(str(mjcf))
         _assert_hand2_model(self.model, mjcf)
         self.data = mujoco.MjData(self.model)
+        protocol_names = hand2_protocol_joint_names(self.side)
+        actuator_names = mujoco_actuator_joint_names(self.model)
+        self._protocol_to_actuator = strict_joint_name_permutation(
+            protocol_names, actuator_names
+        )
+        self._protocol_qpos_addr: list[int] = []
+        self._protocol_dof_addr: list[int] = []
+        for name in protocol_names:
+            joint_id = mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_JOINT, name
+            )
+            if joint_id < 0:
+                raise ValueError(f"Hand2 MJCF is missing protocol joint {name!r}")
+            if self.model.jnt_type[joint_id] != mujoco.mjtJoint.mjJNT_HINGE:
+                raise ValueError(f"Hand2 protocol joint {name!r} is not scalar hinge")
+            self._protocol_qpos_addr.append(int(self.model.jnt_qposadr[joint_id]))
+            self._protocol_dof_addr.append(int(self.model.jnt_dofadr[joint_id]))
+        log.info(
+            "Verified TCP->actuator permutation: %s",
+            self._protocol_to_actuator.tolist(),
+        )
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._sim_thread: Optional[threading.Thread] = None
@@ -93,19 +85,23 @@ class MujocoScene:
             self._sim_thread.join(timeout=2.0)
 
     def set_ctrl(self, position: list[float]) -> None:
+        command = np.asarray(position, dtype=np.float64)
+        if command.shape != (self.NUM_ACTUATORS,):
+            raise ValueError(
+                f"Hand2 command must have shape ({self.NUM_ACTUATORS},), got {command.shape}"
+            )
+        if not np.isfinite(command).all():
+            raise ValueError("Hand2 command contains NaN or infinity")
+        actuator_command = command[self._protocol_to_actuator]
         with self._lock:
-            n = min(len(position), self.model.nu)
-            for i in range(n):
-                self.data.ctrl[i] = float(position[i])
+            self.data.ctrl[:] = actuator_command
 
     def read_joint_state(self) -> tuple[list[float], list[float]]:
         with self._lock:
-            pos = [float(self.data.qpos[i]) for i in range(min(20, self.model.nq))]
-            vel = [float(self.data.qvel[i]) for i in range(min(20, self.model.nv))]
-        while len(pos) < 20:
-            pos.append(0.0)
-        while len(vel) < 20:
-            vel.append(0.0)
+            pos = [float(self.data.qpos[address]) for address in self._protocol_qpos_addr]
+            vel = [float(self.data.qvel[address]) for address in self._protocol_dof_addr]
+        if not all(math.isfinite(value) for value in pos + vel):
+            raise RuntimeError("MuJoCo produced a non-finite Hand2 joint state")
         return pos, vel
 
     def _step_once(self) -> None:

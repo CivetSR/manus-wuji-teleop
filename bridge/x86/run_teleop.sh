@@ -3,16 +3,21 @@
 set -euo pipefail
 
 TELEOP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=/dev/null
+source "${TELEOP_ROOT}/scripts/activate_base.sh"
 X86="${TELEOP_ROOT}/bridge/x86"
 ENV_SH="${TELEOP_ROOT}/manus/scripts/env.sh"
+export WUJI_RETARGETING_ROOT="${WUJI_RETARGETING_ROOT:-${TELEOP_ROOT}/../wuji-retargeting}"
+export WUJI_DESCRIPTION_ROOT="${WUJI_DESCRIPTION_ROOT:-${TELEOP_ROOT}/deps/wuji-description}"
+export PYTHONPATH="${X86}:${TELEOP_ROOT}/bridge${PYTHONPATH:+:${PYTHONPATH}}"
 
 if [[ -f "${ENV_SH}" ]]; then
   # shellcheck source=/dev/null
   source "${ENV_SH}"
 fi
 
-export ROBOT_HOST="${ROBOT_HOST:-127.0.0.1}"
-export ROBOT_PORT="${ROBOT_PORT:-9500}"
+export WUJI_BACKEND_HOST="${WUJI_BACKEND_HOST:-${ROBOT_HOST:-127.0.0.1}}"
+export WUJI_BACKEND_PORT="${WUJI_BACKEND_PORT:-${ROBOT_PORT:-9500}}"
 
 MANUS_PUB=""
 if pgrep -f manus_data_publisher >/dev/null 2>&1; then
@@ -41,5 +46,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Starting Manus -> Wuji bridge (${ROBOT_HOST}:${ROBOT_PORT})"
-exec python3 "${X86}/manus_wuji_bridge.py" --host "${ROBOT_HOST}" --port "${ROBOT_PORT}" "$@"
+echo "==> Starting MANUS/IK client -> backend (${WUJI_BACKEND_HOST}:${WUJI_BACKEND_PORT})"
+exec "${TELEOP_PYTHON}" "${X86}/manus_wuji_bridge.py" \
+  --host "${WUJI_BACKEND_HOST}" \
+  --port "${WUJI_BACKEND_PORT}" \
+  "$@"

@@ -45,7 +45,7 @@ class SimHandWorker:
         self._positions = [0.0] * NUM_JOINTS
         self._velocities = [0.0] * NUM_JOINTS
         self._efforts = [0.0] * NUM_JOINTS
-        self._fingers: List[Dict[str, float]] = [dict(EMPTY_FINGER) for _ in range(5)]
+        self._fingers: List[Dict[str, Any]] = [dict(EMPTY_FINGER) for _ in range(5)]
         self._cmd_seq = 0
         self._state_seq = 0
         self._tactile_seq = 0
@@ -88,16 +88,25 @@ class SimHandWorker:
         self._connected = True
 
     def set_enabled(self, enabled: bool) -> None:
+        hold_position: List[float] | None = None
+        if not enabled:
+            hold_position, _velocity = self.scene.read_joint_state()
         with self._lock:
             self._enabled = bool(enabled)
             if not enabled:
-                self._smoother.set_target(list(self._positions))
+                assert hold_position is not None
+                self._positions = list(hold_position)
+                self._smoother.set_target(list(hold_position))
+                # A MuJoCo position actuator retains its previous ctrl forever.
+                # Replace it once with the current pose so deadman/disarm cannot
+                # continue driving toward a stale target.
+                self.scene.set_ctrl(list(hold_position))
 
-    def set_joint_target(self, position: List[float], enable: bool = True) -> None:
+    def set_joint_target(self, position: List[float]) -> None:
         pos = normalize_positions(position)
         with self._lock:
-            if enable:
-                self._enabled = True
+            if not self._enabled:
+                raise RuntimeError(f"{self.side} sim hand is not armed")
             self._smoother.set_target(pos)
             self._cmd_seq += 1
 
@@ -144,6 +153,7 @@ class SimHandWorker:
             self._thread = None
 
     def disconnect(self) -> None:
+        self.set_enabled(False)
         self.stop()
         self._connected = False
 
@@ -166,6 +176,6 @@ class SimHandWorker:
         with self._lock:
             enabled = self._enabled
             cmd = self._smoother.step() if enabled else None
-        if not enabled or cmd is None:
-            return
-        self.scene.set_ctrl(cmd)
+            if not enabled or cmd is None:
+                return
+            self.scene.set_ctrl(cmd)

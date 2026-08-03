@@ -27,10 +27,14 @@ class JointSmoother:
         control_hz: float = 100.0,
         max_joint_speed_rad_s: float = 2.0,
     ) -> None:
+        if type(num_joints) is not int or num_joints <= 0:
+            raise ValueError("num_joints must be a positive integer")
         self.num_joints = num_joints
-        self.cutoff_hz = float(cutoff_hz)
-        self.control_hz = float(control_hz)
-        self.max_joint_speed_rad_s = float(max_joint_speed_rad_s)
+        self.cutoff_hz = self._finite_nonnegative(cutoff_hz, "cutoff_hz")
+        self.control_hz = self._finite_positive(control_hz, "control_hz")
+        self.max_joint_speed_rad_s = self._finite_positive(
+            max_joint_speed_rad_s, "max_joint_speed_rad_s"
+        )
         self._target = [0.0] * num_joints
         self._filtered = [0.0] * num_joints
         self._initialized = False
@@ -45,19 +49,32 @@ class JointSmoother:
             return 1.0
         return 1.0 - math.exp(-2.0 * math.pi * self.cutoff_hz / max(self.control_hz, 1.0))
 
-    def set_params(
-        self,
-        cutoff_hz: Optional[float] = None,
-        control_hz: Optional[float] = None,
-        max_joint_speed_rad_s: Optional[float] = None,
-    ) -> None:
-        if cutoff_hz is not None:
-            self.cutoff_hz = float(cutoff_hz)
-        if control_hz is not None:
-            self.control_hz = float(control_hz)
-        if max_joint_speed_rad_s is not None:
-            self.max_joint_speed_rad_s = float(max_joint_speed_rad_s)
-        self._alpha = self._compute_alpha()
+    @staticmethod
+    def _finite_nonnegative(value: float, field: str) -> float:
+        number = float(value)
+        if not math.isfinite(number) or number < 0.0:
+            raise ValueError(f"{field} must be finite and non-negative")
+        return number
+
+    @staticmethod
+    def _finite_positive(value: float, field: str) -> float:
+        number = float(value)
+        if not math.isfinite(number) or number <= 0.0:
+            raise ValueError(f"{field} must be finite and positive")
+        return number
+
+    def _validated_vector(self, positions: List[float], field: str) -> List[float]:
+        if not isinstance(positions, list) or len(positions) != self.num_joints:
+            length = len(positions) if isinstance(positions, list) else None
+            raise ValueError(
+                f"{field} must contain exactly {self.num_joints} values, got {length}"
+            )
+        if any(type(value) not in (int, float) for value in positions):
+            raise ValueError(f"{field} values must be numbers")
+        result = [float(value) for value in positions]
+        if not all(math.isfinite(value) for value in result):
+            raise ValueError(f"{field} contains NaN or infinity")
+        return result
 
     @property
     def initialized(self) -> bool:
@@ -69,18 +86,13 @@ class JointSmoother:
             self._target = [0.0] * self.num_joints
             self._initialized = False
             return
-        pos = list(positions[: self.num_joints])
-        if len(pos) < self.num_joints:
-            pos.extend([0.0] * (self.num_joints - len(pos)))
-        self._filtered = [float(x) for x in pos]
+        pos = self._validated_vector(positions, "reset positions")
+        self._filtered = pos
         self._target = list(self._filtered)
         self._initialized = True
 
     def set_target(self, positions: List[float]) -> None:
-        pos = list(positions[: self.num_joints])
-        if len(pos) < self.num_joints:
-            pos.extend([0.0] * (self.num_joints - len(pos)))
-        self._target = [float(x) for x in pos]
+        self._target = self._validated_vector(positions, "target positions")
         # Do NOT snap filtered←target. Official realtime filter seeds from
         # actual joint position via reset(); until then filter from zeros.
         if not self._initialized:
