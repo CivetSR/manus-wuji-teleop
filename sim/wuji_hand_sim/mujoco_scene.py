@@ -47,7 +47,7 @@ def mjcf_for_side(side: str) -> Path:
     if path is None or not path.is_file():
         raise FileNotFoundError(f"Hand 2 MJCF for side={side!r} not found at {path}")
     resolved = str(path.resolve())
-    if any bad in resolved for bad in _FORBIDDEN_PARTS):
+    if any(bad in resolved for bad in _FORBIDDEN_PARTS):
         raise RuntimeError(f"Refusing Hand 1 model path: {path}")
     if "hand2" not in resolved:
         raise RuntimeError(f"Expected hand2 in path, got: {path}")
