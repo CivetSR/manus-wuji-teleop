@@ -10,7 +10,7 @@ Manus 手套 → manus_data_publisher (ROS2) → manus_wuji_bridge (TCP) → Wuj
 ## 快速开始（仿真，推荐）
 
 ```bash
-git clone https://github.com/YOUR_USER/manus-wuji-teleop.git
+git clone https://github.com/CivetSR/manus-wuji-teleop.git
 cd manus-wuji-teleop
 bash setup.sh
 

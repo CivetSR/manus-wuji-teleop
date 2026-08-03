@@ -18,7 +18,7 @@
 ## 2. 克隆与一键安装
 
 ```bash
-git clone https://github.com/YOUR_USER/manus-wuji-teleop.git
+git clone https://github.com/CivetSR/manus-wuji-teleop.git
 cd manus-wuji-teleop
 bash setup.sh
 ```
