@@ -1,4 +1,4 @@
-"""MuJoCo scene: load wuji-description Hand2 MJCF and run physics + viewer."""
+"""MuJoCo scene: Wuji Hand **2** only (hand2/hand2_beta1 MJCF)."""
 
 from __future__ import annotations
 
@@ -13,27 +13,58 @@ import mujoco.viewer
 
 log = logging.getLogger("wuji_hand_sim.mujoco")
 
-# Default: wuji-description Hand2 Beta1 (https://github.com/wuji-technology/wuji-description)
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WUJI_DESC = REPO_ROOT / "deps" / "wuji-description"
+TELEOP_ROOT = Path(__file__).resolve().parents[2]
+HAND2_REL = Path("hand2/hand2_beta1/body/mjcf")
+
+
+def _find_wuji_description() -> Path:
+    candidates = [
+        TELEOP_ROOT / "deps" / "wuji-description",
+        TELEOP_ROOT.parent / "wuji-description",
+    ]
+    for root in candidates:
+        if (root / HAND2_REL / "left.xml").is_file():
+            return root
+    raise FileNotFoundError(
+        "Wuji Hand 2 MJCF not found. Run: bash setup.sh\n"
+        "  or: git clone https://github.com/wuji-technology/wuji-description.git "
+        f"{TELEOP_ROOT / 'deps' / 'wuji-description'}"
+    )
+
+
+WUJI_DESC = _find_wuji_description()
 DEFAULT_MJCF = {
-    "left": WUJI_DESC / "hand2" / "hand2_beta1" / "body" / "mjcf" / "left.xml",
-    "right": WUJI_DESC / "hand2" / "hand2_beta1" / "body" / "mjcf" / "right.xml",
+    "left": WUJI_DESC / HAND2_REL / "left.xml",
+    "right": WUJI_DESC / HAND2_REL / "right.xml",
 }
+
+# Reject Hand 1 paths explicitly
+_FORBIDDEN_PARTS = ("/hand/body/", "/hand/body-with-soft/", "finger1_joint")
 
 
 def mjcf_for_side(side: str) -> Path:
     path = DEFAULT_MJCF.get(side.lower())
     if path is None or not path.is_file():
-        raise FileNotFoundError(
-            f"MJCF for side={side!r} not found at {path}. "
-            "Clone wuji-description: git clone https://github.com/wuji-technology/wuji-description.git"
-        )
+        raise FileNotFoundError(f"Hand 2 MJCF for side={side!r} not found at {path}")
+    resolved = str(path.resolve())
+    if any bad in resolved for bad in _FORBIDDEN_PARTS):
+        raise RuntimeError(f"Refusing Hand 1 model path: {path}")
+    if "hand2" not in resolved:
+        raise RuntimeError(f"Expected hand2 in path, got: {path}")
     return path
 
 
+def _assert_hand2_model(model: mujoco.MjModel, mjcf: Path) -> None:
+    if model.nu != 20:
+        log.warning("Hand 2 expects 20 actuators, model has nu=%d", model.nu)
+    # MuJoCo stores model name in model names buffer; check XML path as primary guard
+    if "hand2" not in str(mjcf):
+        raise RuntimeError(f"Not a Hand 2 MJCF: {mjcf}")
+    log.info("Loaded Wuji Hand 2: %s (nu=%d)", mjcf.name, model.nu)
+
+
 class MujocoScene:
-    """Single-hand MuJoCo model. Protocol index i -> actuator i (20 position actuators)."""
+    """Single Hand 2 model. Protocol index i -> actuator i."""
 
     NUM_ACTUATORS = 20
 
@@ -41,15 +72,10 @@ class MujocoScene:
         self.side = side.lower()
         self.headless = headless
         mjcf = mjcf_for_side(self.side)
-        log.info("Loading MJCF %s", mjcf)
+        log.info("Loading Hand 2 MJCF: %s", mjcf)
         self.model = mujoco.MjModel.from_xml_path(str(mjcf))
+        _assert_hand2_model(self.model, mjcf)
         self.data = mujoco.MjData(self.model)
-        if self.model.nu != self.NUM_ACTUATORS:
-            log.warning(
-                "Expected %d actuators, model has nu=%d — verify joint layout",
-                self.NUM_ACTUATORS,
-                self.model.nu,
-            )
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._sim_thread: Optional[threading.Thread] = None
@@ -57,11 +83,9 @@ class MujocoScene:
     def start(self) -> None:
         self._stop.clear()
         target = self._headless_loop if self.headless else self._viewer_loop
-        self._sim_thread = threading.Thread(
-            target=target, name="mujoco-sim", daemon=True
-        )
+        self._sim_thread = threading.Thread(target=target, name="mujoco-sim", daemon=True)
         self._sim_thread.start()
-        log.info("MuJoCo scene started (%s hand, headless=%s)", self.side, self.headless)
+        log.info("MuJoCo Hand 2 scene started (%s, headless=%s)", self.side, self.headless)
 
     def stop(self) -> None:
         self._stop.set()
@@ -85,7 +109,6 @@ class MujocoScene:
         return pos, vel
 
     def _step_once(self) -> None:
-        """Physics step; caller must hold _lock. Never call mj_step from another thread while viewer.sync runs."""
         mujoco.mj_step(self.model, self.data)
 
     def _headless_loop(self) -> None:
@@ -103,7 +126,6 @@ class MujocoScene:
                 next_t = time.monotonic()
 
     def _viewer_loop(self) -> None:
-        """MuJoCo requires mj_step and viewer.sync in the same thread."""
         try:
             with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
                 dt = self.model.opt.timestep
