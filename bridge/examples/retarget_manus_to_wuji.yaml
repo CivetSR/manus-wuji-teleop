@@ -1,0 +1,56 @@
+# Manus Ergonomics (degrees, typical) -> Wuji Hand 2 joints (radians)
+# Copy to x86 and tune. Keys under each finger match Manus ErgonomicsDataType
+# suffixes: MCPSpread / MCPStretch / PIPStretch / DIPStretch
+
+left:
+  # out[finger*4 + j]
+  Thumb:  { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Index:  { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Middle: { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Ring:   { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Pinky:  { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+
+right:
+  # same structure; calibrate independently
+  Thumb:  { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Index:  { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Middle: { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Ring:   { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+  Pinky:  { J1: {src: MCPStretch, scale: 0.0174533, bias: 0.0},
+            J2: {src: MCPSpread,  scale: 0.0174533, bias: 0.0},
+            J3: {src: PIPStretch, scale: 0.0174533, bias: 0.0},
+            J4: {src: DIPStretch, scale: 0.0174533, bias: 0.0} }
+
+# 0.0174533 ≈ pi/180 (degrees→radians). If Manus already outputs radians, set scale: 1.0
+notes: |
+  Finger order on wire: thumb,index,middle,ring,pinky.
+  Wuji index = finger_index * 4 + joint_index.
+  Tune bias so open-hand → near-zero commands.
+  See X86_MANUS_INTEGRATION.md section 4.

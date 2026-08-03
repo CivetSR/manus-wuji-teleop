@@ -1,0 +1,31 @@
+# Dependencies (cloned by setup.sh — do not commit)
+deps/wuji-description/
+
+# Manus SDK (user installs separately — proprietary)
+# ~/ManusSDK
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ROS2 build
+build/
+install/
+log/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Large archives
+*.tar.gz
+*.zip
+
+# Compiled binaries
+*.out
+manus/bridge/*.out
