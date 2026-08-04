@@ -3,7 +3,7 @@
 When deploying or debugging Manus ↔ Wuji teleop:
 
 1. Read **CURSOR_DEPLOY.md** first — it is the source of truth for setup and run commands.
-2. Default to **sim mode** (`scripts/start_sim.sh` + `ROBOT_HOST=127.0.0.1`) unless user explicitly needs real hardware.
+2. For MANUS glove + MuJoCo sim, follow **docs/SIM_TELEOP.md** (verified two-terminal workflow).
 3. Never commit `~/ManusSDK`, `deps/wuji-description/`, or secrets.
 4. Manus SDK is a **singleton** — only one of `manus_data_publisher` or `manus/bridge/skeleton_bridge.out` at a time.
 5. TCP protocol port is **9500**; joint order is finger-major 20×rad — see `docs/JOINT_LAYOUT.md`.

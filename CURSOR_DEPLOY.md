@@ -79,12 +79,15 @@ source scripts/activate_base.sh
 
 ## 4. MANUS 手套 + MuJoCo
 
+完整步骤与排错见 **[docs/SIM_TELEOP.md](./docs/SIM_TELEOP.md)**（已验证双终端流程）。
+
 ```bash
 # 终端 1
-./scripts/start_sim.sh
+source scripts/activate_base.sh
+HEADLESS=0 SIDES=left ./scripts/start_sim.sh
 
 # 终端 2
-source manus/scripts/env.sh
+source scripts/activate_base.sh
 ./scripts/start_manus_teleop.sh
 ```
 

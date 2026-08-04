@@ -14,6 +14,22 @@ MANUS ROS2 raw_nodes
 
 控制只使用 MANUS 原始骨架节点；无效、缺点、非有限或退化帧会被丢弃，不会转成零位命令。
 
+## 快速开始：MANUS 手套 + MuJoCo 仿真（已验证）
+
+**双终端流程详见 → [docs/SIM_TELEOP.md](./docs/SIM_TELEOP.md)**
+
+```bash
+# 终端 1 — Wuji Hand 2 MuJoCo + TCP :9500
+source scripts/activate_base.sh
+HEADLESS=0 SIDES=left ./scripts/start_sim.sh
+
+# 终端 2 — MANUS 手套 IK 客户端
+source scripts/activate_base.sh
+./scripts/start_manus_teleop.sh
+```
+
+动左手套 → MuJoCo 窗口中的 Hand 2 同步跟随。IK 默认使用 `sdk` backend。
+
 ## 安装
 
 将官方仓库放在本仓库相邻目录，或设置环境变量：
@@ -53,14 +69,16 @@ RETARGET_BACKEND=sdk ./scripts/start_manus_teleop.sh # 等价
 
 脚本会启动 headless MuJoCo，生成合理的 21 点轨迹，执行官方 IK，经 localhost TCP 下发，并验证 `joint_state` 有有限且非零的变化。
 
-也可分终端运行：
+也可分终端运行（与 [docs/SIM_TELEOP.md](./docs/SIM_TELEOP.md) 相同）：
 
 ```bash
 # 终端 1
-HEADLESS=0 ./scripts/start_sim.sh
+source scripts/activate_base.sh
+HEADLESS=0 SIDES=left ./scripts/start_sim.sh
 
-# 终端 2：MANUS 手套（切换 sdk 即可 A/B）
-./scripts/start_manus_teleop.sh --retarget-backend retargeter
+# 终端 2（MANUS 手套，默认 sdk backend）
+source scripts/activate_base.sh
+./scripts/start_manus_teleop.sh
 ```
 
 ## 真实 Hand 2（默认同一台 x86）

@@ -220,6 +220,7 @@ ROS 2             Humble
 ## 10. 相关文档
 
 - [README.md](./README.md) — 快速上手
+- [docs/SIM_TELEOP.md](./docs/SIM_TELEOP.md) — **MANUS + MuJoCo 双终端运行指南（已验证）**
 - [CURSOR_DEPLOY.md](./CURSOR_DEPLOY.md) — 部署与排错
 - [docs/JOINT_LAYOUT.md](./docs/JOINT_LAYOUT.md) — 关节顺序细节
 - [bridge/protocol/schema.md](./bridge/protocol/schema.md) — TCP 消息格式
